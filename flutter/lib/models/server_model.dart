@@ -169,7 +169,7 @@ class ServerModel with ChangeNotifier {
             }
           } else {
             _zeroClientLengthCounter = 0;
-            if (!hideCm) showCmWindow();
+            // if (!hideCm) showCmWindow();  // Disabled: use Ctrl+Shift+Alt+M to show
           }
         }
       }
@@ -285,7 +285,7 @@ class ServerModel with ChangeNotifier {
         if (hideCm) {
           await hideCmWindow();
         } else {
-          await showCmWindow();
+          // await showCmWindow();  // Disabled: use Ctrl+Shift+Alt+M to show
         }
       }
       update = true;
@@ -543,7 +543,7 @@ class ServerModel with ChangeNotifier {
       if (_clients.isEmpty) {
         hideCmWindow();
       } else if (!hideCm) {
-        showCmWindow();
+        // showCmWindow();  // Disabled: use Ctrl+Shift+Alt+M to show
       }
     }
     if (_clients.length != oldClientLenght) {
@@ -578,7 +578,7 @@ class ServerModel with ChangeNotifier {
         tabController.remove(index_disconnected);
       }
       if (desktopType == DesktopType.cm && !hideCm) {
-        showCmWindow();
+        // showCmWindow();  // Disabled: use Ctrl+Shift+Alt+M to show
       }
       scrollToBottom();
       notifyListeners();

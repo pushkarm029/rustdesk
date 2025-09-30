@@ -1,0 +1,17 @@
+name: PR and Push Build
+
+on:
+  pull_request:
+    branches:
+      - master
+      - project
+  push:
+    branches:
+      - project
+
+jobs:
+  build-all-platforms:
+    uses: ./.github/workflows/flutter-build.yml
+    with:
+      upload-artifact: true
+      upload-tag: "pr-build"
