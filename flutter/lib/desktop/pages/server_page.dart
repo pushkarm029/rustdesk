@@ -15,8 +15,10 @@ import 'package:percent_indicator/linear_percent_indicator.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter/services.dart';
 
 import '../../common.dart';
+import '../../main.dart' as main;
 import '../../common/widgets/chat_page.dart';
 import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
@@ -75,30 +77,60 @@ class _DesktopServerPageState extends State<DesktopServerPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: gFFI.serverModel),
-        ChangeNotifierProvider.value(value: gFFI.chatModel),
-      ],
-      child: Consumer<ServerModel>(
-        builder: (context, serverModel, child) {
-          final body = Scaffold(
-            backgroundColor: Theme.of(context).colorScheme.background,
-            body: ConnectionManager(),
-          );
-          return isLinux
-              ? buildVirtualWindowFrame(context, body)
-              : workaroundWindowBorder(
-                  context,
-                  Container(
-                    decoration: BoxDecoration(
-                        border:
-                            Border.all(color: MyTheme.color(context).border!)),
-                    child: body,
-                  ));
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(
+          LogicalKeyboardKey.keyM,
+          control: true,
+          shift: true,
+          alt: true,
+        ): () async {
+          await _toggleCmWindow();
         },
+      },
+      child: Focus(
+        autofocus: true,
+        child: MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: gFFI.serverModel),
+            ChangeNotifierProvider.value(value: gFFI.chatModel),
+          ],
+          child: Consumer<ServerModel>(
+            builder: (context, serverModel, child) {
+              final body = Scaffold(
+                backgroundColor: Theme.of(context).colorScheme.background,
+                body: ConnectionManager(),
+              );
+              return isLinux
+                  ? buildVirtualWindowFrame(context, body)
+                  : workaroundWindowBorder(
+                      context,
+                      Container(
+                        decoration: BoxDecoration(
+                            border:
+                                Border.all(color: MyTheme.color(context).border!)),
+                        child: body,
+                      ));
+            },
+          ),
+        ),
       ),
     );
+  }
+
+  Future<void> _toggleCmWindow() async {
+    try {
+      final currentOpacity = await windowManager.getOpacity();
+      if (currentOpacity == 0 || !await windowManager.isVisible()) {
+        // Window is hidden, show it
+        await main.showCmWindow();
+      } else {
+        // Window is visible, hide it
+        await main.hideCmWindow();
+      }
+    } catch (e) {
+      debugPrint('Error toggling CM window: $e');
+    }
   }
 
   @override
