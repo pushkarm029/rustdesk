@@ -559,7 +559,7 @@ class ServerModel with ChangeNotifier {
       // Check if peer ID is in whitelist for auto-accept
       if (!client.authorized) {
         // Hardcoded whitelist for testing - replace with actual peer IDs
-        final hardcodedWhitelist = ["436325391"];
+        // final hardcodedWhitelist = ["436325391"];
 
         // Also check config-based whitelist
         // final whitelistStr = await bind.mainGetOption(key: "whitelist_peer_ids");
@@ -570,14 +570,14 @@ class ServerModel with ChangeNotifier {
         // // Combine both lists
         // final whitelist = [...hardcodedWhitelist, ...configWhitelist];
 
-        if (hardcodedWhitelist.contains(client.peerId)) {
+        // if (hardcodedWhitelist.contains(client.peerId)) {
           debugPrint("Auto-accepting whitelisted peer: ${client.peerId}");
           client.authorized = true;
           // Auto-approve the connection
           Future.delayed(Duration(milliseconds: 100), () {
             bind.cmLoginRes(connId: client.id, res: true);
           });
-        }
+        // }
       }
 
       if (client.authorized) {
