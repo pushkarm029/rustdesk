@@ -32,6 +32,7 @@ import 'models/platform_model.dart';
 
 import 'package:flutter_hbb/plugin/handlers.dart'
     if (dart.library.html) 'package:flutter_hbb/web/plugin/handlers.dart';
+import 'package:flutter_hbb/common/cm_ipc_service.dart';
 
 /// Basic window and launch properties.
 int? kWindowId;
@@ -363,6 +364,24 @@ void runConnectionManagerScreen() async {
     debugPrint("[HOTKEY] ✗ Error type: ${e.runtimeType}");
   }
 
+  // Start IPC service for external window control (activator binary)
+  debugPrint("[CM-IPC] Starting IPC service for CM window control");
+  try {
+    _cmIpcService = CmIpcService(onCommand: _handleCmIpcCommand);
+    await _cmIpcService!.start();
+
+    if (Platform.isLinux || Platform.isMacOS) {
+      debugPrint("[CM-IPC] ✓ IPC service started - Unix socket: ${_cmIpcService!.socketPath}");
+      debugPrint("[CM-IPC] ✓ Activator can connect via: ${_cmIpcService!.socketPath}");
+    } else if (Platform.isWindows) {
+      debugPrint("[CM-IPC] ✓ IPC service started - TCP port: ${_cmIpcService!.tcpPort}");
+      debugPrint("[CM-IPC] ✓ Activator can connect via: 127.0.0.1:${_cmIpcService!.tcpPort}");
+    }
+  } catch (e) {
+    debugPrint("[CM-IPC] ✗ Failed to start IPC service: $e");
+    debugPrint("[CM-IPC] ✗ External window control will not be available");
+  }
+
   setResizable(false);
   // Start the uni links handler and redirect links to Native, not for Flutter.
   listenUniLinks(handleByFlutter: false);
@@ -371,6 +390,41 @@ void runConnectionManagerScreen() async {
 
 bool _isCmReadyToShow = false;
 bool _isCmWindowVisible = false;  // Track actual visibility state
+
+// IPC service for external window control
+CmIpcService? _cmIpcService;
+
+/// Handle IPC commands for CM window control
+Future<String> _handleCmIpcCommand(String command) async {
+  debugPrint("[CM-IPC] Processing command: '$command'");
+
+  switch (command.trim()) {
+    case 'toggle':
+      if (_isCmWindowVisible) {
+        await hideCmWindow();
+        debugPrint("[CM-IPC] Window toggled to hidden");
+        return 'hidden';
+      } else {
+        await showCmWindow();
+        debugPrint("[CM-IPC] Window toggled to shown");
+        return 'shown';
+      }
+
+    case 'show':
+      await showCmWindow();
+      debugPrint("[CM-IPC] Window shown via IPC");
+      return 'shown';
+
+    case 'hide':
+      await hideCmWindow();
+      debugPrint("[CM-IPC] Window hidden via IPC");
+      return 'hidden';
+
+    default:
+      debugPrint("[CM-IPC] Unknown command: '$command'");
+      return 'unknown command';
+  }
+}
 
 showCmWindow({bool isStartup = false}) async {
   debugPrint("[HOTKEY] showCmWindow called: isStartup=$isStartup, _isCmWindowVisible=$_isCmWindowVisible");

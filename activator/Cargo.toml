@@ -1,0 +1,21 @@
+[package]
+name = "activator"
+version = "0.1.0"
+edition = "2024"
+description = "Flutter app activator via Unix sockets/Windows named pipes"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+# This is a standalone project, not part of rustdesk workspace
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"          # Optimize for size
+lto = true               # Link-time optimization
+codegen-units = 1        # Better optimization
+strip = true             # Strip symbols
+panic = "abort"          # Smaller binary size
+
+[profile.dev]
+opt-level = 0
