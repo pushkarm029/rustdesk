@@ -22,6 +22,18 @@ const wchar_t* getWindowClassName();
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
+  // Attach console FIRST, before any Rust code runs
+  // This ensures logs from --server mode are visible
+  if (!::AttachConsole(ATTACH_PARENT_PROCESS)) {
+    // No parent console, create new one for --server mode
+    ::AllocConsole();
+  }
+  // Redirect stdout/stderr to console
+  FILE* fp_stdout = nullptr;
+  FILE* fp_stderr = nullptr;
+  freopen_s(&fp_stdout, "CONOUT$", "w", stdout);
+  freopen_s(&fp_stderr, "CONOUT$", "w", stderr);
+
   HINSTANCE hInstance = LoadLibraryA("librustdesk.dll");
   if (!hInstance)
   {
@@ -53,11 +65,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   char** c_args = rustdesk_core_main(&args_len);
   if (!c_args)
   {
-    std::string args_str = "";
-    for (const auto& argument : command_line_arguments) {
-      args_str += (argument + " ");
+    // Server mode (e.g., --server): Rust code is handling everything
+    // Don't exit! The server is running in the Rust DLL
+    // Wait indefinitely to keep process alive
+    std::cout << "[Flutter Runner] Server mode detected, waiting..." << std::endl;
+    ::MSG msg;
+    while (::GetMessage(&msg, nullptr, 0, 0)) {
+      ::TranslateMessage(&msg);
+      ::DispatchMessage(&msg);
     }
-    // std::cout << "RustDesk [" << args_str << "], core returns false, exiting without launching Flutter app." << std::endl;
     return EXIT_SUCCESS;
   }
   std::vector<std::string> rust_args(c_args, c_args + args_len);
@@ -99,12 +115,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     }
   }
 
-  // Attach to console when present (e.g., 'flutter run') or create a
-  // new console when running with a debugger.
-  if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent())
-  {
-    CreateAndAttachConsole();
-  }
+  // Console already attached at start of main()
 
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.

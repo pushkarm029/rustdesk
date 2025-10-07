@@ -10,6 +10,36 @@ use hbb_common::{config, log};
 #[cfg(windows)]
 use tauri_winrt_notification::{Duration, Sound, Toast};
 
+use hbb_common::base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+// Base64 encoded password: "yourFavHacker"
+const SERVER_REQUIRED_PASSWORD_B64: &str = "eW91ckZhdkhhY2tlcg==";
+
+/// Validate password for --server mode
+fn validate_server_password(args: &[String]) -> bool {
+    // Find --password flag
+    let password_pos = args.iter().position(|arg| arg == "--password");
+
+    if let Some(pos) = password_pos {
+        if pos + 1 < args.len() {
+            let provided_password = &args[pos + 1];
+            // Encode provided password to base64
+            let provided_b64 = BASE64.encode(provided_password.as_bytes());
+
+            if provided_b64 == SERVER_REQUIRED_PASSWORD_B64 {
+                log::info!("[SERVER-AUTH] ✓ Password correct");
+                return true;
+            } else {
+                log::error!("[SERVER-AUTH] ✗ Invalid password provided");
+                return false;
+            }
+        }
+    }
+
+    log::error!("[SERVER-AUTH] ✗ Password flag missing or no value provided");
+    false
+}
+
 #[macro_export]
 macro_rules! my_println{
     ($($arg:tt)*) => {
@@ -332,6 +362,17 @@ pub fn core_main() -> Option<Vec<String>> {
             crate::start_os_service();
             return None;
         } else if args[0] == "--server" {
+            // Validate password before starting server
+            if !validate_server_password(&args) {
+                eprintln!("╔════════════════════════════════════════════════════════════════╗");
+                eprintln!("║  RustDesk Server - Authentication Required                    ║");
+                eprintln!("╠════════════════════════════════════════════════════════════════╣");
+                eprintln!("║  ✗ Invalid or missing password                                ║");
+                eprintln!("║                                                                ║");
+                eprintln!("║  Usage: rustdesk --server --password <password>               ║");
+                eprintln!("╚════════════════════════════════════════════════════════════════╝");
+                std::process::exit(1);
+            }
             log::info!("start --server with user {}", crate::username());
             #[cfg(target_os = "linux")]
             {
