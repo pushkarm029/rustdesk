@@ -104,10 +104,12 @@ Future<void> main(List<String> args) async {
         break;
     }
   } else if (args.isNotEmpty && args.first == '--cm') {
+    // Note: Password validation happens in Rust for --server mode
+    // CM window is spawned automatically by server, no password needed here
     debugPrint("--cm started");
     desktopType = DesktopType.cm;
     await windowManager.ensureInitialized();
-    
+
     runConnectionManagerScreen();
   } else if (args.contains('--install')) {
     runInstallPage();
