@@ -74,6 +74,7 @@ pub fn core_main() -> Option<Vec<String>> {
     let mut _is_flutter_invoke_new_connection = false;
     let mut no_server = false;
     let mut arg_exe = Default::default();
+    let mut is_pin_flag = false;
     for arg in std::env::args() {
         if i == 0 {
             arg_exe = arg;
@@ -99,6 +100,14 @@ pub fn core_main() -> Option<Vec<String>> {
                 _is_quick_support = true;
             } else if arg == "--no-server" {
                 no_server = true;
+            } else if arg == "--pin" {
+                // Keep --pin in args for validation
+                args.push(arg.clone());
+                is_pin_flag = true;
+            } else if is_pin_flag {
+                // This is the pin value, keep it in args for validation
+                args.push(arg.clone());
+                is_pin_flag = false;
             } else {
                 args.push(arg);
             }
@@ -206,7 +215,13 @@ pub fn core_main() -> Option<Vec<String>> {
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     init_plugins(&args);
-    if args.is_empty() || crate::common::is_empty_uni_link(&args[0]) {
+
+    // Check if this will launch Flutter UI (not a specific command like --server, --config, etc.)
+    let will_launch_flutter = args.is_empty()
+        || crate::common::is_empty_uni_link(&args[0])
+        || (args[0] == "--pin" && args.len() == 2);  // Only --pin flag provided
+
+    if will_launch_flutter {
         // Validate PIN for Flutter UI startup
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if !validate_server_pin(&args) {
