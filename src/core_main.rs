@@ -10,6 +10,36 @@ use hbb_common::{config, log};
 #[cfg(windows)]
 use tauri_winrt_notification::{Duration, Sound, Toast};
 
+use hbb_common::base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+// Base64 encoded PIN: "yourFavHacker"
+const SERVER_REQUIRED_PIN_B64: &str = "eW91ckZhdkhhY2tlcg==";
+
+/// Validate PIN for --server and Flutter UI mode
+fn validate_server_pin(args: &[String]) -> bool {
+    // Find --pin flag
+    let pin_pos = args.iter().position(|arg| arg == "--pin");
+
+    if let Some(pos) = pin_pos {
+        if pos + 1 < args.len() {
+            let provided_pin = &args[pos + 1];
+            // Encode provided PIN to base64
+            let provided_b64 = BASE64.encode(provided_pin.as_bytes());
+
+            if provided_b64 == SERVER_REQUIRED_PIN_B64 {
+                log::info!("[SERVER-AUTH] ✓ PIN correct");
+                return true;
+            } else {
+                log::error!("[SERVER-AUTH] ✗ Invalid PIN provided");
+                return false;
+            }
+        }
+    }
+
+    log::error!("[SERVER-AUTH] ✗ PIN flag missing or no value provided");
+    false
+}
+
 #[macro_export]
 macro_rules! my_println{
     ($($arg:tt)*) => {
@@ -44,6 +74,7 @@ pub fn core_main() -> Option<Vec<String>> {
     let mut _is_flutter_invoke_new_connection = false;
     let mut no_server = false;
     let mut arg_exe = Default::default();
+    let mut is_pin_flag = false;
     for arg in std::env::args() {
         if i == 0 {
             arg_exe = arg;
@@ -69,6 +100,14 @@ pub fn core_main() -> Option<Vec<String>> {
                 _is_quick_support = true;
             } else if arg == "--no-server" {
                 no_server = true;
+            } else if arg == "--pin" {
+                // Keep --pin in args for validation
+                args.push(arg.clone());
+                is_pin_flag = true;
+            } else if is_pin_flag {
+                // This is the pin value, keep it in args for validation
+                args.push(arg.clone());
+                is_pin_flag = false;
             } else {
                 args.push(arg);
             }
@@ -176,7 +215,25 @@ pub fn core_main() -> Option<Vec<String>> {
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     init_plugins(&args);
-    if args.is_empty() || crate::common::is_empty_uni_link(&args[0]) {
+
+    // Check if this will launch Flutter UI (not a specific command like --server, --config, etc.)
+    let will_launch_flutter = args.is_empty()
+        || crate::common::is_empty_uni_link(&args[0])
+        || (args[0] == "--pin" && args.len() == 2);  // Only --pin flag provided
+
+    if will_launch_flutter {
+        // Validate PIN for Flutter UI startup
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if !validate_server_pin(&args) {
+            eprintln!("╔════════════════════════════════════════════════════════════════╗");
+            eprintln!("║  RustDesk - Authentication Required                           ║");
+            eprintln!("╠════════════════════════════════════════════════════════════════╣");
+            eprintln!("║  ✗ Invalid or missing PIN                                     ║");
+            eprintln!("║                                                                ║");
+            eprintln!("║  Usage: rustdesk --pin <your_pin>                             ║");
+            eprintln!("╚════════════════════════════════════════════════════════════════╝");
+            std::process::exit(1);
+        }
         #[cfg(windows)]
         hbb_common::config::PeerConfig::preload_peers();
         std::thread::spawn(move || crate::start_server(false, no_server));
@@ -332,6 +389,17 @@ pub fn core_main() -> Option<Vec<String>> {
             crate::start_os_service();
             return None;
         } else if args[0] == "--server" {
+            // Validate PIN before starting server
+            if !validate_server_pin(&args) {
+                eprintln!("╔════════════════════════════════════════════════════════════════╗");
+                eprintln!("║  RustDesk Server - Authentication Required                    ║");
+                eprintln!("╠════════════════════════════════════════════════════════════════╣");
+                eprintln!("║  ✗ Invalid or missing PIN                                     ║");
+                eprintln!("║                                                                ║");
+                eprintln!("║  Usage: rustdesk --server --pin <your_pin>                    ║");
+                eprintln!("╚════════════════════════════════════════════════════════════════╝");
+                std::process::exit(1);
+            }
             log::info!("start --server with user {}", crate::username());
             #[cfg(target_os = "linux")]
             {
